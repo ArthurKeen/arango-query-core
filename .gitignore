@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+
+# Dark-factory drift queue (personal agent infrastructure)
+.prd-drift-queue/
