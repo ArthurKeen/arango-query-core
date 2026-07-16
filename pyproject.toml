@@ -28,7 +28,7 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/arango-solutions/arango-query-core"
+Repository = "https://github.com/ArthurKeen/arango-query-core"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
