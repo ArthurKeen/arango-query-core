@@ -41,4 +41,4 @@ pip install "arango-query-core[nl]"      # + NL engine runtime deps
 
 Consumed as a pinned artifact (contextual-data-fabric CC-9): consumers
 pin exact versions and re-run their golden suites on every bump.
-Pre-PyPI, pin a git tag.
+On PyPI since v0.1.0.

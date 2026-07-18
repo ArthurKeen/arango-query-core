@@ -52,9 +52,12 @@ It ships two things:
   `arango-query-core` even though it now also carries the NL engine —
   conceptual-model identity is signaled at the subpackage level
   (`arango_query_core.nl`), not by minting a second artifact.
-- **PyPI publication gate.** Publish to PyPI once the seam API survives
-  the `nl2cypher` re-point (extraction step 2). Pre-PyPI, consumers pin
-  a git tag.
+- **PyPI publication.** v0.1.0 was published 2026-07-17 (decision:
+  claim the name while the `nl2cypher` re-point was in flight),
+  superseding the proposal's publish-after-re-point gate. The gate now
+  applies to *subsequent* releases: any seam-API change forced by the
+  re-point ships as 0.2.0 with an explicit changelog break notice, and
+  consumers keep pinning exact versions.
 - **Behavioral reference.** The code was seeded verbatim from
   arango-cypher-py @ `5a1392b`; that repo's NL eval suite is the
   non-regression gate for the re-point.
@@ -145,8 +148,8 @@ Consequences:
 - Tag releases `vX.Y.Z`; maintain `CHANGELOG.md` (Keep-a-Changelog
   style). Pre-1.0, minor bumps may break the API but the changelog
   must say so explicitly.
-- Pre-PyPI consumers pin a git tag; PyPI publication begins per the
-  §1.1 gate.
+- Published on PyPI as of v0.1.0 (2026-07-17); consumers pin exact
+  PyPI versions (git tags remain as a fallback pin).
 
 ## 7. Current state (2026-07-16)
 
@@ -161,8 +164,8 @@ to `(question, query)` pairs; five-seam protocol; repair loop).
 
 1. ~~Carve `arango-query-core` into its own repo/distribution.~~ ✅
 2. **Re-point `nl2cypher`** at this core; arango-cypher-py's NL eval
-   suite is the non-regression gate. Seam-API survival here opens the
-   PyPI gate.
+   suite is the non-regression gate. Seam changes it forces ship as
+   0.2.0.
 3. **Implement `nl2sparql`** directly as the second adapter in
    arango-sparql-py (no interim engine port); its `RUN_EVAL=1` eval
    harness is the gate there.
