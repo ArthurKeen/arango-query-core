@@ -4,6 +4,7 @@ prompt-section rendering, and graceful degradation."""
 from __future__ import annotations
 
 import sys
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -34,7 +35,11 @@ class _FakeEncoder:
         vectors = np.zeros((len(texts), _FAKE_DIM), dtype=float)
         for row, text in enumerate(texts):
             for token in text.lower().split():
-                vectors[row, hash(token) % _FAKE_DIM] += 1.0
+                # zlib.crc32 is process-stable, unlike the builtin hash() whose
+                # per-process PYTHONHASHSEED randomization made this "deterministic"
+                # encoder non-deterministic (test_dense_retrieval_ranks_by_relevance
+                # flaked ~25% of runs).
+                vectors[row, zlib.crc32(token.encode()) % _FAKE_DIM] += 1.0
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         return vectors / norms
