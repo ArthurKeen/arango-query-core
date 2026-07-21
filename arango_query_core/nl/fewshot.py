@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -30,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 # Recognized spellings of the example's query field, canonical first.
 _QUERY_KEYS = ("query", "cypher", "sparql", "aql")
+
+# Pinned dense-embedding model + HF revision (commit hash), verified present
+# on huggingface.co before pinning (see arango-sparql-py Phase 7 Plan 01
+# SUMMARY for the verification record). Pinning a specific revision (not
+# "main") keeps DenseRetriever's retrieval order reproducible across runs
+# regardless of upstream repo changes.
+DEFAULT_DENSE_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_DENSE_REVISION = "7dbbc90392e2f80f3d3c277d6e90027e55de9125"
 
 
 @runtime_checkable
@@ -87,6 +96,63 @@ class BM25Retriever:
         return out
 
 
+class DenseRetriever:
+    """Dense-embedding retriever over a fixed list of ``(question, query)`` examples.
+
+    Ranks examples by descending cosine similarity between the query's
+    sentence embedding and each bank question's pre-computed embedding
+    (normalized-embedding dot product == cosine similarity).
+
+    ``sentence-transformers`` is imported lazily so the module can be
+    imported even when the dependency is not installed. Attempting to
+    *construct* a ``DenseRetriever`` without ``sentence-transformers``
+    (and without an injected ``encoder``) raises :class:`ImportError`
+    with a helpful message — mirrors :class:`BM25Retriever`'s contract.
+    """
+
+    def __init__(
+        self,
+        examples: list[tuple[str, str]],
+        *,
+        model_id: str = DEFAULT_DENSE_MODEL_ID,
+        revision: str = DEFAULT_DENSE_REVISION,
+        encoder=None,
+    ) -> None:
+        self._examples: list[tuple[str, str]] = list(examples)
+
+        if encoder is not None:
+            # Test / injection path: skip the lazy import entirely.
+            self._encode = encoder
+        else:
+            try:
+                from sentence_transformers import SentenceTransformer
+            except ImportError as exc:
+                raise ImportError(
+                    "DenseRetriever requires the 'sentence-transformers' package. "
+                    "Install it with `pip install sentence-transformers` or "
+                    "`pip install 'arango-query-core[dense]'`."
+                ) from exc
+
+            self._model = SentenceTransformer(model_id, revision=revision)
+            self._encode = lambda texts: self._model.encode(texts, normalize_embeddings=True)
+
+        if self._examples:
+            self._bank_embeddings = self._encode([q for q, _ in self._examples])
+        else:
+            self._bank_embeddings = None
+
+    def retrieve(self, question: str, k: int = 3) -> list[tuple[str, str]]:
+        if not self._examples or self._bank_embeddings is None or k <= 0:
+            return []
+        q_emb = self._encode([question])[0]
+        scores = self._bank_embeddings @ q_emb
+        ranked = sorted(
+            range(len(self._examples)),
+            key=lambda i: (-float(scores[i]), i),
+        )
+        return [self._examples[i] for i in ranked[:k]]
+
+
 class _NoopRetriever:
     """Fallback retriever used when BM25 / corpora are unavailable."""
 
@@ -120,9 +186,19 @@ class FewShotIndex:
         """Read-only view of all examples loaded into the index."""
         return list(self._examples)
 
+    @property
+    def retriever(self) -> Retriever:
+        """Read-only access to the wrapped :class:`Retriever` instance.
+
+        Public so callers (e.g. the eval sweep's ``isinstance(index.retriever,
+        DenseRetriever)`` guard) never need to reach into the private
+        ``_retriever`` attribute.
+        """
+        return self._retriever
+
     @classmethod
-    def from_corpus_files(cls, paths: list[Path]) -> FewShotIndex:
-        """Load YAML corpora and build a BM25-backed index.
+    def from_corpus_files(cls, paths: list[Path], *, mode: str = "auto") -> FewShotIndex:
+        """Load YAML corpora and build a retriever-backed index.
 
         The corpus file shape is::
 
@@ -134,6 +210,18 @@ class FewShotIndex:
         ``query`` is the canonical key; the legacy per-language keys
         ``cypher`` / ``sparql`` / ``aql`` are accepted as fallbacks so
         pre-extraction corpora load without rewriting.
+
+        ``mode`` selects the retriever backend and its degrade behavior:
+
+        - ``"dense"``: construct a :class:`DenseRetriever`. Hard-raises
+          ``ImportError`` if ``sentence-transformers`` is unavailable —
+          no silent downgrade (measurement integrity for explicit dense
+          requests, e.g. the eval sweep).
+        - ``"bm25"``: construct a :class:`BM25Retriever`. Degrades to
+          :class:`_NoopRetriever` if ``rank_bm25`` is unavailable.
+        - ``"auto"`` (default): try dense, then BM25, then no-op — never
+          raises for missing optional dependencies. Preserves today's
+          behavior for callers that don't pass ``mode=``.
         """
         examples: list[tuple[str, str]] = []
         try:
@@ -165,11 +253,31 @@ class FewShotIndex:
         if not examples:
             return cls(_NoopRetriever(), examples=[])
 
-        try:
-            retriever: Retriever = BM25Retriever(examples)
-        except ImportError as exc:
-            logger.info("rank_bm25 not installed; FewShotIndex degrades to no-op: %s", exc)
-            retriever = _NoopRetriever()
+        retriever: Retriever
+        if mode == "dense":
+            # Explicit dense request: let ImportError propagate (hard raise).
+            retriever = DenseRetriever(examples)
+        elif mode == "bm25":
+            try:
+                retriever = BM25Retriever(examples)
+            except ImportError as exc:
+                logger.info("rank_bm25 not installed; FewShotIndex degrades to no-op: %s", exc)
+                retriever = _NoopRetriever()
+        else:  # "auto" (default) — dense -> bm25 -> noop, never raises
+            try:
+                retriever = DenseRetriever(examples)
+            except ImportError as exc:
+                logger.info(
+                    "sentence-transformers not installed; FewShotIndex falls back to BM25: %s",
+                    exc,
+                )
+                try:
+                    retriever = BM25Retriever(examples)
+                except ImportError as exc2:
+                    logger.info(
+                        "rank_bm25 not installed; FewShotIndex degrades to no-op: %s", exc2
+                    )
+                    retriever = _NoopRetriever()
         return cls(retriever, examples=examples)
 
     def retrieve(self, question: str, k: int = 3) -> list[tuple[str, str]]:
@@ -194,3 +302,18 @@ class FewShotIndex:
             lines.append(query.strip())
             lines.append("```")
         return "\n".join(lines)
+
+
+@lru_cache(maxsize=4)
+def cached_few_shot_index(bank_path: str, mode: str) -> FewShotIndex:
+    """Memoized :class:`FewShotIndex` factory, keyed on bank path + mode.
+
+    A model-backed retriever (:class:`DenseRetriever`) loads a
+    ``SentenceTransformer`` model and embeds the whole bank at
+    construction time — expensive work that must happen ONCE per
+    process, not once per :class:`~arango_query_core.nl.seams.QueryLanguageAdapter`
+    (adapters are commonly constructed fresh per request / per eval
+    case). Callers needing a fresh index (e.g. test isolation) can call
+    ``cached_few_shot_index.cache_clear()``.
+    """
+    return FewShotIndex.from_corpus_files([Path(bank_path)], mode=mode)
