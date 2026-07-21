@@ -3,15 +3,52 @@ prompt-section rendering, and graceful degradation."""
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
-from arango_query_core.nl import FewShotIndex
+import numpy as np
+import pytest
+
+from arango_query_core.nl import DenseRetriever, FewShotIndex
 
 
 def _write_corpus(tmp_path: Path, name: str, body: str) -> Path:
     p = tmp_path / name
     p.write_text(body, encoding="utf-8")
     return p
+
+
+_FAKE_DIM = 16
+
+
+class _FakeEncoder:
+    """Deterministic bag-of-words "embedding" — no torch, no network.
+
+    Hashes each whitespace/word token into one of ``_FAKE_DIM`` buckets and
+    L2-normalizes the resulting vector, so texts sharing words end up with
+    higher cosine similarity — enough signal to exercise DenseRetriever's
+    ranking logic without a real model.
+    """
+
+    def __call__(self, texts: list[str]) -> np.ndarray:
+        vectors = np.zeros((len(texts), _FAKE_DIM), dtype=float)
+        for row, text in enumerate(texts):
+            for token in text.lower().split():
+                vectors[row, hash(token) % _FAKE_DIM] += 1.0
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return vectors / norms
+
+
+class _ConstantEncoder:
+    """Fake encoder returning the SAME vector for every input text.
+
+    Used to test tie-break-by-index: when all candidates score identically,
+    the earlier-indexed example must win.
+    """
+
+    def __call__(self, texts: list[str]) -> np.ndarray:
+        return np.ones((len(texts), _FAKE_DIM), dtype=float) / (_FAKE_DIM**0.5)
 
 
 def test_loads_canonical_query_key(tmp_path: Path) -> None:
@@ -98,4 +135,70 @@ def test_empty_or_missing_corpus_degrades_to_noop(tmp_path: Path) -> None:
     index = FewShotIndex.from_corpus_files([empty, tmp_path / "missing.yml"])
     assert index.examples == []
     assert index.retrieve("anything") == []
+    assert index.format_prompt_section("anything") == ""
+
+
+def test_dense_retrieval_ranks_by_relevance() -> None:
+    examples = [
+        ("count all movies released after a year", "Q_MOVIES"),
+        ("list every person and their friends", "Q_FRIENDS"),
+        ("total orders per customer segment", "Q_ORDERS"),
+    ]
+    retriever = DenseRetriever(examples, encoder=_FakeEncoder())
+    top = retriever.retrieve("how many movies came out after a year?", k=1)
+    assert top and top[0][1] == "Q_MOVIES"
+
+
+def test_dense_ties_break_by_index() -> None:
+    examples = [
+        ("first example", "Q_FIRST"),
+        ("second example", "Q_SECOND"),
+    ]
+    retriever = DenseRetriever(examples, encoder=_ConstantEncoder())
+    top = retriever.retrieve("anything", k=1)
+    assert top == [("first example", "Q_FIRST")]
+
+
+def test_dense_empty_examples_returns_empty() -> None:
+    retriever = DenseRetriever([], encoder=_FakeEncoder())
+    assert retriever.retrieve("anything") == []
+
+
+def test_from_corpus_files_dense_mode_hard_raises_without_st(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    corpus = _write_corpus(
+        tmp_path,
+        "c.yml",
+        """
+examples:
+  - question: "find all people"
+    query: "Q1"
+""",
+    )
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    with pytest.raises(ImportError, match="sentence-transformers"):
+        FewShotIndex.from_corpus_files([corpus], mode="dense")
+
+
+def test_from_corpus_files_auto_mode_degrades_to_bm25(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    corpus = _write_corpus(
+        tmp_path,
+        "c.yml",
+        """
+examples:
+  - question: "count all movies released after a year"
+    query: "Q_MOVIES"
+  - question: "list every person and their friends"
+    query: "Q_FRIENDS"
+  - question: "total orders per customer segment"
+    query: "Q_ORDERS"
+""",
+    )
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    index = FewShotIndex.from_corpus_files([corpus], mode="auto")
+    top = index.retrieve("how many movies came out after 2000?", k=1)
+    assert top and top[0][1] == "Q_MOVIES"
     assert index.format_prompt_section("anything") == ""
