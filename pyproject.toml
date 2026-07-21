@@ -34,6 +34,9 @@ nl = [
   "PyYAML>=6.0.0",
   "rank_bm25>=0.2.2",
 ]
+dense = [
+  "sentence-transformers>=3.0",
+]
 dev = [
   "pytest>=8.0.0",
   "ruff>=0.6.0",

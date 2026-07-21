@@ -7,7 +7,7 @@ enters exclusively through :class:`~arango_query_core.nl.seams.QueryLanguageAdap
 """
 
 from .engine import NLQueryEngine, NLResult
-from .fewshot import BM25Retriever, FewShotIndex, Retriever
+from .fewshot import BM25Retriever, DenseRetriever, FewShotIndex, Retriever, cached_few_shot_index
 from .providers import (
     AnthropicProvider,
     LLMProvider,
@@ -21,6 +21,7 @@ from .seams import GuardrailVerdict, QueryLanguageAdapter, ValidationResult
 __all__ = [
     "AnthropicProvider",
     "BM25Retriever",
+    "DenseRetriever",
     "FewShotIndex",
     "GuardrailVerdict",
     "LLMProvider",
@@ -31,6 +32,7 @@ __all__ = [
     "QueryLanguageAdapter",
     "Retriever",
     "ValidationResult",
+    "cached_few_shot_index",
     "get_llm_provider",
     "split_system_for_anthropic_cache",
 ]
