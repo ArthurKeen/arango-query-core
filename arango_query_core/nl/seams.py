@@ -110,3 +110,15 @@ class QueryLanguageAdapter(Protocol):
         request's target data, or ``None`` to run ungrounded (mirrors
         seam 2)."""
         ...
+
+    def grounding_prompt_section(
+        self, question: str, index: LabelIndex, k: int = 20
+    ) -> str:
+        """Seam 6 (renderer) — turn the retrieved grounding ``index``
+        into the language-specific "known entities" prompt block (e.g.
+        SPARQL's "use these EXACT IRIs" wording). The engine calls this
+        only when :meth:`grounding_index` returns a non-``None`` index;
+        return the empty string to inject nothing. Adapter-owned so the
+        wording stays language-specific while the retrieval/rendering
+        machinery lives in :class:`LabelIndex`."""
+        ...

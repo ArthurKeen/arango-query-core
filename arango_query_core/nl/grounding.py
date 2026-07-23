@@ -87,7 +87,7 @@ class LabelIndex:
         self._entities: list[GroundedEntity] = list(entities)
 
     @classmethod
-    def from_items(cls, items: list[GroundedEntity]) -> "LabelIndex":
+    def from_items(cls, items: list[GroundedEntity]) -> LabelIndex:
         return cls(items)
 
     def retrieve(self, question: str, k: int = 20) -> list[GroundedEntity]:
