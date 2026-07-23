@@ -111,9 +111,7 @@ class QueryLanguageAdapter(Protocol):
         seam 2)."""
         ...
 
-    def grounding_prompt_section(
-        self, question: str, index: LabelIndex, k: int = 20
-    ) -> str:
+    def grounding_prompt_section(self, question: str, index: LabelIndex, k: int = 20) -> str:
         """Seam 6 (renderer) — turn the retrieved grounding ``index``
         into the language-specific "known entities" prompt block (e.g.
         SPARQL's "use these EXACT IRIs" wording). The engine calls this

@@ -274,9 +274,7 @@ class FewShotIndex:
                 try:
                     retriever = BM25Retriever(examples)
                 except ImportError as exc2:
-                    logger.info(
-                        "rank_bm25 not installed; FewShotIndex degrades to no-op: %s", exc2
-                    )
+                    logger.info("rank_bm25 not installed; FewShotIndex degrades to no-op: %s", exc2)
                     retriever = _NoopRetriever()
         return cls(retriever, examples=examples)
 
