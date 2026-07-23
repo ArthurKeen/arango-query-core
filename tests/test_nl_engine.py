@@ -7,7 +7,9 @@ from __future__ import annotations
 from typing import Any
 
 from arango_query_core.nl import (
+    GroundedEntity,
     GuardrailVerdict,
+    LabelIndex,
     NLQueryEngine,
     ValidationResult,
 )
@@ -119,3 +121,36 @@ def test_system_prompt_contains_grammar_section() -> None:
     engine.generate("show everything", schema_context="Classes: Person")
     system = provider.calls[0][0]
     assert "## Grammar" in system and "Classes: Person" in system
+
+
+class GroundedFakeAdapter(FakeAdapter):
+    """FakeAdapter + a populated grounding index (seam 6)."""
+
+    _SENTINEL_LABEL = "Sentinel Widget XYZ123"
+
+    def grounding_index(self) -> LabelIndex | None:
+        return LabelIndex.from_items(
+            [GroundedEntity(id="http://ex.org/w1", labels=(self._SENTINEL_LABEL,), type="Widget")]
+        )
+
+    def grounding_prompt_section(self, question: str, index: LabelIndex, k: int = 20) -> str:
+        return index.format_prompt_section(
+            question,
+            k=k,
+            header="## Known entities",
+            instruction="Use the exact IDs below.",
+            id_prefix="<",
+            id_suffix=">",
+        )
+
+
+def test_engine_composes_grounding_block() -> None:
+    provider = FakeProvider(["SELECT ?s WHERE { ?s ?p ?o }"])
+    adapter = GroundedFakeAdapter()
+    engine = NLQueryEngine(provider=provider, adapter=adapter, grounding_k=20)
+    engine.generate(f"find the {GroundedFakeAdapter._SENTINEL_LABEL}")
+    system = provider.calls[0][0]
+    assert "## Known entities" in system
+    assert GroundedFakeAdapter._SENTINEL_LABEL in system
+    # Grounding lands AFTER the grammar/few-shot sections.
+    assert system.index("## Grammar") < system.index("## Known entities")
