@@ -47,6 +47,9 @@ class FakeAdapter:
     def few_shot_index(self) -> FewShotIndex | None:
         return FewShotIndex(_NoopRetriever(), examples=[])
 
+    def grounding_index(self):
+        return None
+
     def validate(self, query: str) -> ValidationResult:
         if "SELECT" in query:
             return ValidationResult(ok=True)

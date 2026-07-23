@@ -8,6 +8,7 @@ enters exclusively through :class:`~arango_query_core.nl.seams.QueryLanguageAdap
 
 from .engine import NLQueryEngine, NLResult
 from .fewshot import BM25Retriever, DenseRetriever, FewShotIndex, Retriever, cached_few_shot_index
+from .grounding import GroundedEntity, LabelIndex
 from .providers import (
     AnthropicProvider,
     LLMProvider,
@@ -23,7 +24,9 @@ __all__ = [
     "BM25Retriever",
     "DenseRetriever",
     "FewShotIndex",
+    "GroundedEntity",
     "GuardrailVerdict",
+    "LabelIndex",
     "LLMProvider",
     "NLQueryEngine",
     "NLResult",

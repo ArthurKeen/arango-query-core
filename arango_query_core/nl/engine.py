@@ -56,12 +56,16 @@ class NLQueryEngine:
     adapter's corpus (seam 2) and rendered under ``## Examples`` — the
     section :func:`~arango_query_core.nl.providers.split_system_for_anthropic_cache`
     treats as the cache boundary, so the static prefix (grammar +
-    schema) stays cacheable across questions.
+    schema) stays cacheable across questions. ``grounding_k`` entities
+    are likewise retrieved per question from the adapter's grounding
+    index (seam 6) and rendered after the few-shot section — also
+    post-cache-boundary, per-question dynamic content.
     """
 
     provider: LLMProvider
     adapter: QueryLanguageAdapter
     few_shot_k: int = 3
+    grounding_k: int = 20
     max_retries: int = 2
     guardrail_context: dict[str, Any] = field(default_factory=dict)
 
@@ -118,6 +122,11 @@ class NLQueryEngine:
             )
             if examples:
                 sections.append(examples)
+        grounding = self.adapter.grounding_index()
+        if grounding is not None:
+            block = self.adapter.grounding_prompt_section(question, grounding, k=self.grounding_k)
+            if block:
+                sections.append(block)
         return "\n\n".join(s for s in sections if s)
 
 

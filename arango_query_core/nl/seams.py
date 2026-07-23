@@ -12,7 +12,8 @@ the engine was carved out of ``arango_cypher.nl2cypher`` (see
 2. the few-shot corpus,
 3. the syntax validator,
 4. the repair rules keyed on validator errors,
-5. the guardrail checks (e.g. tenant-scope AST validation).
+5. the guardrail checks (e.g. tenant-scope AST validation),
+6. the entity/instance grounding index.
 
 Adapters live NEXT TO their transpilers (``arango_cypher.nl2cypher``,
 ``arango_sparql.nl2sparql``), never in this package: validating a
@@ -28,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from .fewshot import FewShotIndex
+from .grounding import LabelIndex
 
 
 @dataclass
@@ -101,4 +103,10 @@ class QueryLanguageAdapter(Protocol):
         (tenant scope, write-op refusal, …). ``context`` carries
         request-scoped facts the adapter's checks need (e.g.
         ``{"tenant_id": …}``)."""
+        ...
+
+    def grounding_index(self) -> LabelIndex | None:
+        """Seam 6 — the pre-built instance/entity label index for this
+        request's target data, or ``None`` to run ungrounded (mirrors
+        seam 2)."""
         ...
