@@ -17,9 +17,17 @@ signature breaks.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .postconditions import (
+    Postcondition,
+    PostconditionContext,
+    PostconditionViolation,
+    postcondition_prompt_sections,
+    run_postconditions,
+)
 from .providers import LLMProvider
 from .seams import GuardrailVerdict, QueryLanguageAdapter, ValidationResult
 
@@ -46,6 +54,7 @@ class NLResult:
     cached_tokens: int = 0
     guardrail: GuardrailVerdict | None = None
     validation: ValidationResult | None = None
+    postcondition: PostconditionViolation | None = None
 
 
 @dataclass
@@ -72,18 +81,26 @@ class NLQueryEngine:
     predicate_k: int = 20
     max_retries: int = 2
     guardrail_context: dict[str, Any] = field(default_factory=dict)
+    postconditions: Sequence[Postcondition] = ()
+    postcondition_mapping: Any = None
 
     def generate(self, question: str, *, schema_context: str = "") -> NLResult:
         result = NLResult()
         system = self._system_prompt(question, schema_context)
         user = question
         failure: ValidationResult | None = None
+        violation: PostconditionViolation | None = None
         candidate = ""
 
         for attempt in range(self.max_retries + 1):
             if attempt > 0:
-                assert failure is not None
-                hint = self.adapter.repair_hint(candidate, failure) or failure.error
+                # A postcondition rejection carries its own correction text;
+                # otherwise fall back to the adapter's syntactic repair hint.
+                if violation is not None:
+                    hint = f"{violation.reason} {violation.suggested_hint}".strip()
+                else:
+                    assert failure is not None
+                    hint = self.adapter.repair_hint(candidate, failure) or failure.error
                 user = (
                     f"{question}\n\n"
                     f"Your previous {self.adapter.language} query was rejected:\n"
@@ -98,13 +115,32 @@ class NLQueryEngine:
             candidate = _strip_code_fence(content, self.adapter.language)
             failure = self.adapter.validate(candidate)
             result.validation = failure
-            if failure.ok:
+            if not failure.ok:
+                violation = None
+                continue
+            # Valid query — enforce caller postconditions through the same
+            # retry budget (semantic invariants parse/translate cannot catch).
+            violation = run_postconditions(
+                candidate,
+                self.postconditions,
+                PostconditionContext(
+                    schema_summary=schema_context,
+                    question=question,
+                    attempt=attempt,
+                    mapping=self.postcondition_mapping,
+                ),
+            )
+            result.postcondition = violation
+            if violation is None:
                 break
-        else:  # pragma: no cover — loop always breaks or exhausts via range
-            pass
 
         if failure is None or not failure.ok:
             result.error = failure.error if failure else "provider returned nothing"
+            return result
+        if violation is not None:
+            # Budget spent on a valid-but-semantically-rejected query — fail
+            # closed rather than return a plausible wrong answer.
+            result.error = f"{violation.reason} ({violation.code})"
             return result
 
         verdict = self.adapter.guardrails(candidate, dict(self.guardrail_context))
@@ -136,6 +172,11 @@ class NLQueryEngine:
             pred_block = self.adapter.predicate_prompt_section(question, predicates, k=self.predicate_k)
             if pred_block:
                 sections.append(pred_block)
+        # Caller postconditions announce their invariants up front so the model
+        # aims to satisfy them, not just get corrected after breaking one. These
+        # are static per call (no per-question content), so they stay inside the
+        # cacheable prefix rather than after the few-shot cache boundary.
+        sections.extend(postcondition_prompt_sections(self.postconditions))
         return "\n\n".join(s for s in sections if s)
 
 

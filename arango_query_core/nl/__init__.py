@@ -9,6 +9,13 @@ enters exclusively through :class:`~arango_query_core.nl.seams.QueryLanguageAdap
 from .engine import NLQueryEngine, NLResult
 from .fewshot import BM25Retriever, DenseRetriever, FewShotIndex, Retriever, cached_few_shot_index
 from .grounding import GroundedEntity, GroundedPredicate, LabelIndex, PredicateIndex
+from .postconditions import (
+    Postcondition,
+    PostconditionContext,
+    PostconditionViolation,
+    postcondition_prompt_sections,
+    run_postconditions,
+)
 from .providers import (
     AnthropicProvider,
     LLMProvider,
@@ -34,6 +41,9 @@ __all__ = [
     "NLResult",
     "OpenAIProvider",
     "OpenRouterProvider",
+    "Postcondition",
+    "PostconditionContext",
+    "PostconditionViolation",
     "PredicateIndex",
     "QueryLanguageAdapter",
     "Retriever",
@@ -42,5 +52,7 @@ __all__ = [
     "ValidationResult",
     "cached_few_shot_index",
     "get_llm_provider",
+    "postcondition_prompt_sections",
+    "run_postconditions",
     "split_system_for_anthropic_cache",
 ]
