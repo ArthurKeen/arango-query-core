@@ -245,9 +245,7 @@ class ClassPathIndex:
         """
         results: list[tuple[tuple[str, ...], str]] = []
         # stack: (node, edges_so_far, visited_classes, self_loop_used)
-        stack: list[tuple[str, tuple[str, ...], tuple[str, ...], bool]] = [
-            (start, (), (start,), False)
-        ]
+        stack: list[tuple[str, tuple[str, ...], tuple[str, ...], bool]] = [(start, (), (start,), False)]
         while stack:
             node, edges, visited, self_used = stack.pop()
             if edges:
