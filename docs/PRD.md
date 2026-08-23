@@ -1,7 +1,7 @@
 # arango-query-core — Product Requirements Document
 
-**Status:** Active development · **v0.1.0**
-**Last updated:** 2026-07-17
+**Status:** Active development · **v0.2.0**
+**Last updated:** 2026-08-23
 **Owner:** arango-query-core maintainers
 
 > This PRD governs the standalone `arango-query-core` distribution. The
@@ -31,10 +31,11 @@ It ships two things:
    AQL fragment types, safe execution helpers, an extension registry,
    and the shared error base.
 2. **A language-agnostic NL→query engine** — LLM provider abstraction
-   (OpenAI / OpenRouter / Anthropic with prompt caching), BM25 few-shot
-   retrieval, and the generate→validate→repair loop, with everything
-   language-specific delegated to a five-seam `QueryLanguageAdapter`
-   protocol implemented *next to* each transpiler, never here.
+   (OpenAI / OpenRouter / Anthropic with prompt caching), BM25/dense
+   few-shot retrieval, caller-supplied semantic postconditions, and the
+   generate→validate→repair loop, with everything language-specific
+   delegated to an eight-seam `QueryLanguageAdapter` protocol
+   implemented *next to* each transpiler, never here.
 
 ### 1.1 Defining decisions (confirmed 2026-07-16)
 
@@ -61,6 +62,18 @@ It ships two things:
 - **Behavioral reference.** The code was seeded verbatim from
   arango-cypher-py @ `5a1392b`; that repo's NL eval suite is the
   non-regression gate for the re-point.
+- **0.2.0 ships the seam-6/7/8 break (2026-08-23).** Entity grounding
+  (6), predicate grounding (7), and relationship-path grounding (8)
+  join the protocol as *unconditionally called* methods — an adapter
+  missing any of the eight raises `AttributeError` at prompt-build
+  time. Also ships alongside: caller-supplied postconditions
+  (`nl.postconditions`), the `nl.synthbank` shape catalog, and
+  `DenseRetriever` (`dense` extra). Per §1.1's PyPI policy this is the
+  explicit changelog-documented break. `nl2cypher` (pinned
+  `<0.2.0` as of the step-2 re-point) and `nl2sparql` (adapter ships
+  ungrounded seam-6/7 stubs, git-pinned pre-seam-8) each need a
+  deliberate pin bump plus seam-8/postcondition implementation before
+  moving past `0.1.0` — see §8.
 
 ## 2. Problem statement
 
@@ -80,7 +93,7 @@ to prevent a three-way fork.
 
 - One pinned artifact carrying the conceptual-model contract and the
   NL engine, consumed by both transpilers and the fabric.
-- A small, stable public API: the package `__all__` plus the five-seam
+- A small, stable public API: the package `__all__` plus the eight-seam
   `QueryLanguageAdapter` protocol. Stability of the seam list is the
   product; churn here multiplies into release + pin-bump work across
   every consumer (see §6).
@@ -111,8 +124,12 @@ to prevent a three-way fork.
 | `errors` | `CoreError` shared base |
 | `nl.engine` | `NLQueryEngine` — prompt assembly, few-shot retrieval, provider call, generate→validate→repair loop; `NLResult` |
 | `nl.providers` | `LLMProvider` protocol; OpenAI / OpenRouter / Anthropic implementations (Anthropic with prompt-cache system-block splitting); env-driven `get_llm_provider` |
-| `nl.fewshot` | `FewShotIndex` over `(question, query)` pairs (legacy corpus keys accepted), `BM25Retriever` (rank_bm25 behind the `nl` extra) |
-| `nl.seams` | `QueryLanguageAdapter` — the five language-specific seams: (1) grammar prompt section, (2) few-shot corpus, (3) syntax validator, (4) repair rules keyed on validator errors, (5) guardrail checks. Plus `ValidationResult`, `GuardrailVerdict` |
+| `nl.fewshot` | `FewShotIndex` over `(question, query)` pairs (legacy corpus keys accepted); `BM25Retriever` (rank_bm25, `nl` extra) and `DenseRetriever` (sentence-transformers, `dense` extra), selected via `mode="bm25"\|"dense"\|"auto"`; `cached_few_shot_index` memoizes the expensive dense build |
+| `nl.grounding` | Seam 6/7 retrieval: `LabelIndex`/`GroundedEntity` (entity grounding) and `PredicateIndex`/`GroundedPredicate` (predicate/schema-convention grounding, renders IRI local names not labels), sharing one token-substring scorer |
+| `nl.pathindex` | Seam 8: `ClassPathIndex`/`ClassPath` — bounded shortest predicate paths between two seam-6/7-anchored classes over the TBox's class-connectivity graph |
+| `nl.postconditions` | Caller-supplied semantic invariants (`Postcondition`, `PostconditionContext`, `PostconditionViolation`, `run_postconditions`) enforced through the engine's own retry budget; fails closed on exhaustion |
+| `nl.synthbank` | `SHAPE_CATALOG`/`ShapeTemplate` — 9 ontology-agnostic compositional query-shape templates for synthetic few-shot bank generation |
+| `nl.seams` | `QueryLanguageAdapter` — the eight language-specific seams: (1) grammar prompt section, (2) few-shot corpus, (3) syntax validator, (4) repair rules keyed on validator errors, (5) guardrail checks, (6) entity grounding index, (7) predicate grounding index, (8) relationship-path grounding index. Plus `ValidationResult`, `GuardrailVerdict` |
 
 ## 5. Requirements
 
@@ -151,24 +168,26 @@ Consequences:
 - Published on PyPI as of v0.1.0 (2026-07-17); consumers pin exact
   PyPI versions (git tags remain as a fallback pin).
 
-## 7. Current state (2026-07-16)
+## 7. Current state (2026-08-23)
 
-Extraction **step 1 shipped**: this repo, seeded verbatim from
-arango-cypher-py @ `5a1392b` (mapping / OWL round-trip / aql / exec /
-extensions with their five test modules) plus the new
-`arango_query_core.nl` engine (providers verbatim; few-shot generalized
-to `(question, query)` pairs; five-seam protocol; repair loop).
-78 tests, ruff + mypy + pytest green in CI, sdist/wheel build clean.
+v0.2.0, published on PyPI. Since 0.1.0: seams 6-8 (entity/predicate/
+path grounding), caller-supplied postconditions, the `nl.synthbank`
+shape catalog, `DenseRetriever`, and the predicate IRI local-name fix.
+146 tests (up from 78), ruff + mypy + pytest green in CI, sdist/wheel
+build clean.
 
 ## 8. Roadmap (extraction steps 2–4)
 
 1. ~~Carve `arango-query-core` into its own repo/distribution.~~ ✅
-2. **Re-point `nl2cypher`** at this core; arango-cypher-py's NL eval
-   suite is the non-regression gate. Seam changes it forces ship as
-   0.2.0.
-3. **Implement `nl2sparql`** directly as the second adapter in
-   arango-sparql-py (no interim engine port); its `RUN_EVAL=1` eval
-   harness is the gate there.
+2. **Re-point `nl2cypher`** at this core — **done** (arango-cypher-py
+   `56cdb14`), pinned `>=0.1.0,<0.2.0`. Its adapter does not yet
+   implement seams 6-8 or postconditions; bumping past the `<0.2.0`
+   ceiling needs that work first, gated by its NL eval suite.
+3. **Implement `nl2sparql`** as the second adapter in arango-sparql-py
+   — its adapter implements seams 6/7 as ungrounded stubs but is
+   git-pinned pre-seam-8; seam-8 + postcondition adoption and the pin
+   bump to 0.2.0 are a deliberate CC-9 step (re-run `RUN_EVAL=1`
+   goldens) still ahead.
 4. **Hand fabric WP-D1** the core + adapter pins.
 
 Later (from arango-cypher-py PRD §12.3): resolver-adjacent pieces may

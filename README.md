@@ -17,8 +17,11 @@ fabric pin one artifact instead of forking the same code three ways.
 | `arango_query_core.mapping` | `MappingBundle` — the conceptual↔physical model contract (entities, relationships, physical annotations) shared by both transpilers and the analyzers' CSI pipeline |
 | `arango_query_core.owl_turtle` / `owl_rdflib` | OWL/Turtle ⇄ MappingBundle round-trip (rdflib optional, via the `owl` extra) |
 | `arango_query_core.aql` / `exec` / `extensions` / `errors` | AQL fragment types, safe execution helpers, extension registry, error base |
-| `arango_query_core.nl` | Language-agnostic NL→query engine: LLM providers (OpenAI / OpenRouter / Anthropic with prompt caching), BM25 few-shot retrieval, and the generate→validate→repair loop |
-| `arango_query_core.nl.seams` | `QueryLanguageAdapter` — the five language-specific seams an adapter implements (grammar prompt, corpus, validator, repair rules, guardrails) |
+| `arango_query_core.nl` | Language-agnostic NL→query engine: LLM providers (OpenAI / OpenRouter / Anthropic with prompt caching), BM25/dense few-shot retrieval, caller-supplied semantic postconditions, and the generate→validate→repair loop |
+| `arango_query_core.nl.seams` | `QueryLanguageAdapter` — the eight language-specific seams an adapter implements (grammar prompt, corpus, validator, repair rules, guardrails, entity/predicate/path grounding) |
+| `arango_query_core.nl.grounding` / `pathindex` | Entity, predicate, and relationship-path grounding retrieval (seams 6-8) — inject known IDs, schema conventions, and navigation hints into the prompt |
+| `arango_query_core.nl.postconditions` | Caller-supplied semantic invariants enforced through the same generate→validate→retry budget, failing closed on exhaustion |
+| `arango_query_core.nl.synthbank` | Ontology-agnostic query-shape template catalog for synthetic few-shot bank generation |
 
 ## What's deliberately NOT here
 
@@ -35,6 +38,7 @@ Dependencies point one way: transpilers → this package.
 pip install arango-query-core            # mapping/aql core, zero deps
 pip install "arango-query-core[owl]"     # + rdflib OWL round-trip
 pip install "arango-query-core[nl]"      # + NL engine runtime deps
+pip install "arango-query-core[dense]"   # + dense-embedding few-shot retrieval
 ```
 
 ## Versioning
