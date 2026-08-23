@@ -52,6 +52,9 @@ class FakeAdapter:
     def predicate_index(self):
         return None
 
+    def path_index(self):
+        return None
+
     def validate(self, query: str) -> ValidationResult:
         if "SELECT" in query:
             return ValidationResult(ok=True)

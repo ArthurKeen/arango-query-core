@@ -9,6 +9,7 @@ enters exclusively through :class:`~arango_query_core.nl.seams.QueryLanguageAdap
 from .engine import NLQueryEngine, NLResult
 from .fewshot import BM25Retriever, DenseRetriever, FewShotIndex, Retriever, cached_few_shot_index
 from .grounding import GroundedEntity, GroundedPredicate, LabelIndex, PredicateIndex
+from .pathindex import ClassPath, ClassPathIndex
 from .postconditions import (
     Postcondition,
     PostconditionContext,
@@ -30,6 +31,8 @@ from .synthbank import SHAPE_CATALOG, ShapeTemplate
 __all__ = [
     "AnthropicProvider",
     "BM25Retriever",
+    "ClassPath",
+    "ClassPathIndex",
     "DenseRetriever",
     "FewShotIndex",
     "GroundedEntity",
