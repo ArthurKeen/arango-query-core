@@ -189,3 +189,53 @@ class TestImportError:
         with patch("builtins.__import__", side_effect=mock_import):
             with pytest.raises(ImportError, match="rdflib is required"):
                 parse_owl_with_rdflib(MINIMAL_OWL)
+
+
+ANALYZER_OWL = """\
+@prefix : <http://arangodb.com/schema/hybrid#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix phys: <http://arangodb.com/schema/physical#> .
+
+:Chunk a owl:Class ; phys:collectionName "chunks" .
+:Document a owl:Class ; phys:collectionName "documents" .
+:Note a owl:Class ; phys:collectionName "notes" .
+
+:content a owl:DatatypeProperty ;
+  rdfs:domain [ a owl:Class ; owl:unionOf ( :Chunk :Document ) ] .
+:file_name a owl:DatatypeProperty ;
+  rdfs:domain :Document ;
+  phys:attributeName "file-name" .
+:tag a owl:DatatypeProperty ;
+  rdfs:domain :Document , :Note ;
+  rdfs:range xsd:string .
+"""
+
+
+def _names(bundle, entity):
+    return sorted(
+        p["name"]
+        for e in bundle.conceptual_schema["entities"]
+        if e["name"] == entity
+        for p in e["properties"]
+    )
+
+
+def test_a_union_domain_gives_the_field_to_every_member():
+    bundle = parse_owl_with_rdflib(ANALYZER_OWL)
+    # The anonymous union class is not an entity of its own.
+    assert sorted(e["name"] for e in bundle.conceptual_schema["entities"]) == ["Chunk", "Document", "Note"]
+    assert _names(bundle, "Chunk") == ["content"]
+    assert _names(bundle, "Document") == ["content", "file_name", "tag"]
+
+
+def test_several_domains_each_get_the_field():
+    assert _names(parse_owl_with_rdflib(ANALYZER_OWL), "Note") == ["tag"]
+
+
+def test_attribute_name_becomes_the_physical_field():
+    bundle = parse_owl_with_rdflib(ANALYZER_OWL)
+    assert bundle.physical_mapping["entities"]["Document"]["properties"] == {
+        "file_name": {"field": "file-name"}
+    }

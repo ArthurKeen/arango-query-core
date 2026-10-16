@@ -6,6 +6,27 @@ exact versions (contextual-data-fabric CC-9) and re-run their golden /
 eval suites on every bump — pre-1.0, **minor** bumps may break the API
 and this file must say so explicitly.
 
+## [0.2.1] - 2026-10-16
+
+### Fixed
+
+- **OWL import keeps property names.** `owl_turtle.turtle_to_mapping` cut
+  every datatype-property name at its last underscore — a rule meant for the
+  `:<REL>_<prop>` relationship properties `mapping_to_turtle` writes — so
+  `file_name` imported as `name` and `account_id` as `id`, including on a
+  round trip of this library's own export. Entity properties now keep their
+  full name; relationship properties lose exactly their `<REL>_` prefix.
+- **Shared fields reach every class.** Both importers (`turtle_to_mapping`
+  and the rdflib-based `parse_owl_with_rdflib`) dropped a property whose
+  `rdfs:domain` is an `owl:unionOf` list — arangodb-schema-analyzer
+  0.15.1's form for a field several classes share — and the rdflib one read
+  only the first of several domains. Each member / domain now gets the field,
+  and the anonymous union class is no longer imported as an entity.
+- **Stored field names.** `phys:attributeName` (analyzer 0.15.1) now maps a
+  property to its stored field in the physical mapping
+  (`properties.<name>.field`), so a sanitized or renamed field (`file-name`,
+  `page_count`) resolves to the attribute that holds it.
+
 ## [0.2.0] - 2026-08-23
 
 ### BREAKING

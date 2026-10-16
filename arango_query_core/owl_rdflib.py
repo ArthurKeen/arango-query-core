@@ -42,23 +42,30 @@ def parse_owl_with_rdflib(turtle_text: str) -> MappingBundle:
     entities: list[dict[str, Any]] = []
     entity_props: dict[str, list[dict[str, str]]] = {}
 
-    for cls in g.subjects(RDF.type, OWL.Class):
+    for cls in _named_classes(g, RDF, OWL):
         name = _local_name(cls)
         entities.append({"name": name, "labels": [name], "properties": []})
         entity_props[name] = []
 
     # ── Extract datatype properties ──────────────────────────────────
+    # A property's domain may be one class, several (each gets the field),
+    # or an owl:unionOf class expression — arangodb-schema-analyzer's form
+    # for a field several classes share. phys:attributeName names the
+    # stored field when it differs from the property name.
+    fields: dict[str, dict[str, str]] = {}
     for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
         prop_name = _local_name(prop)
-        domain = g.value(prop, RDFS.domain)
         range_uri = g.value(prop, RDFS.range)
         prop_entry: dict[str, str] = {"name": prop_name}
         if range_uri:
             prop_entry["type"] = _xsd_to_simple(str(range_uri))
-        if domain:
-            domain_name = _local_name(domain)
-            if domain_name in entity_props:
-                entity_props[domain_name].append(prop_entry)
+        attribute = g.value(prop, PHYS.attributeName)
+        for domain_node in g.objects(prop, RDFS.domain):
+            for domain_name in _domain_names(g, domain_node, OWL):
+                if domain_name in entity_props:
+                    entity_props[domain_name].append(prop_entry)
+                    if attribute:
+                        fields.setdefault(domain_name, {})[prop_name] = str(attribute)
 
     for entity in entities:
         entity["properties"] = entity_props.get(entity["name"], [])
@@ -82,7 +89,7 @@ def parse_owl_with_rdflib(turtle_text: str) -> MappingBundle:
     physical_entities: dict[str, dict[str, Any]] = {}
     physical_rels: dict[str, dict[str, Any]] = {}
 
-    for cls in g.subjects(RDF.type, OWL.Class):
+    for cls in _named_classes(g, RDF, OWL):
         name = _local_name(cls)
         coll = g.value(cls, PHYS.collectionName)
         style = g.value(cls, PHYS.style) or g.value(cls, PHYS.mappingStyle)
@@ -98,6 +105,8 @@ def parse_owl_with_rdflib(turtle_text: str) -> MappingBundle:
                 pm_entry["typeField"] = str(type_field)
             if type_value:
                 pm_entry["typeValue"] = str(type_value)
+            for prop_name, field in fields.get(name, {}).items():
+                pm_entry["properties"][prop_name] = {"field": field}
             physical_entities[name] = pm_entry
 
     for prop in g.subjects(RDF.type, OWL.ObjectProperty):
@@ -125,6 +134,27 @@ def parse_owl_with_rdflib(turtle_text: str) -> MappingBundle:
         owl_turtle=turtle_text,
         source=MappingSource(kind="owl_turtle"),
     )
+
+
+def _named_classes(g: Any, rdf: Any, owl: Any) -> list[Any]:
+    """Every ``owl:Class`` with an IRI. An anonymous class expression (the
+    ``[ a owl:Class ; owl:unionOf ( … ) ]`` of a shared field's domain) is not
+    an entity."""
+    import rdflib
+
+    return [c for c in g.subjects(rdf.type, owl.Class) if isinstance(c, rdflib.URIRef)]
+
+
+def _domain_names(g: Any, domain: Any, owl: Any) -> list[str]:
+    """Class names a ``rdfs:domain`` value covers: the class itself, or every
+    member of an ``owl:unionOf`` list."""
+    import rdflib
+    from rdflib.collection import Collection
+
+    if isinstance(domain, rdflib.BNode):
+        members = g.value(domain, owl.unionOf)
+        return [_local_name(m) for m in Collection(g, members)] if members is not None else []
+    return [_local_name(domain)]
 
 
 def _local_name(uri: Any) -> str:

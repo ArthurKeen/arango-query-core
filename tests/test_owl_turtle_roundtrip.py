@@ -164,3 +164,91 @@ def test_export_label_style() -> None:
     assert pm_p["style"] == "LABEL"
     assert pm_p["typeField"] == "type"
     assert pm_p["typeValue"] == "Person"
+
+
+# ---------------------------------------------------------------------------
+# Property names, shared fields and stored-field names (import fixes)
+# ---------------------------------------------------------------------------
+
+# The layout arangodb-schema-analyzer >= 0.15.1 writes: a field two classes
+# share has an owl:unionOf domain; a renamed or sanitized field carries its
+# stored name in phys:attributeName.
+ANALYZER_OWL = """\
+@prefix : <http://arangodb.com/schema/hybrid#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix phys: <http://arangodb.com/schema/physical#> .
+
+:Chunk a owl:Class ;
+  rdfs:label "Chunk" .
+:Chunk phys:mappingStyle "COLLECTION" .
+:Chunk phys:collectionName "chunks" .
+
+:Document a owl:Class ;
+  rdfs:label "Document" .
+:Document phys:mappingStyle "COLLECTION" .
+:Document phys:collectionName "documents" .
+
+:content a owl:DatatypeProperty ;
+  rdfs:label "content" ;
+  rdfs:domain [ a owl:Class ; owl:unionOf ( :Chunk :Document ) ] .
+
+:file_name a owl:DatatypeProperty ;
+  rdfs:label "file-name" ;
+  rdfs:domain :Document .
+:file_name phys:attributeName "file-name" .
+
+:page_count a owl:DatatypeProperty ;
+  rdfs:label "page_count" ;
+  rdfs:domain :Document ;
+  rdfs:range xsd:integer .
+"""
+
+
+def _props(bundle: MappingBundle, entity: str) -> list[str]:
+    return [
+        p["name"]
+        for e in bundle.conceptual_schema["entities"]
+        if e["name"] == entity
+        for p in e["properties"]
+    ]
+
+
+def test_snake_case_entity_properties_keep_their_names(simple_bundle: MappingBundle) -> None:
+    """Regression: every name was cut at its last underscore (file_name -> name)."""
+    simple_bundle.conceptual_schema["entities"][0]["properties"].append(
+        {"name": "account_id", "type": "string"}
+    )
+    back = turtle_to_mapping(mapping_to_turtle(simple_bundle))
+    assert _props(back, "Person") == ["name", "age", "account_id"]
+
+
+def test_relationship_properties_lose_only_their_prefix(simple_bundle: MappingBundle) -> None:
+    simple_bundle.conceptual_schema["relationships"][0]["properties"] = [
+        {"name": "role_name", "type": "string"}
+    ]
+    back = turtle_to_mapping(mapping_to_turtle(simple_bundle))
+    (rel,) = back.conceptual_schema["relationships"]
+    assert [p["name"] for p in rel["properties"]] == ["role_name"]
+
+
+def test_a_field_with_a_union_domain_belongs_to_every_member() -> None:
+    bundle = turtle_to_mapping(ANALYZER_OWL)
+    assert _props(bundle, "Chunk") == ["content"]
+    assert _props(bundle, "Document") == ["content", "file_name", "page_count"]
+
+
+def test_attribute_name_maps_the_property_to_its_stored_field() -> None:
+    bundle = turtle_to_mapping(ANALYZER_OWL)
+    assert bundle.physical_mapping["entities"]["Document"]["properties"] == {
+        "file_name": {"field": "file-name"}
+    }
+    assert "properties" not in bundle.physical_mapping["entities"]["Chunk"]
+
+
+def test_a_property_declared_once_per_domain_reaches_each(simple_bundle: MappingBundle) -> None:
+    """mapping_to_turtle writes one block per entity for a shared name."""
+    simple_bundle.conceptual_schema["entities"][1]["properties"].append({"name": "name", "type": "string"})
+    back = turtle_to_mapping(mapping_to_turtle(simple_bundle))
+    assert "name" in _props(back, "Person") and "name" in _props(back, "Movie")
