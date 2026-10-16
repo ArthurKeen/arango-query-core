@@ -111,10 +111,21 @@ def mapping_to_turtle(bundle: MappingBundle) -> str:
 
 
 def turtle_to_mapping(turtle: str) -> MappingBundle:
-    """Parse an OWL/Turtle string into a MappingBundle."""
+    """Parse an OWL/Turtle string into a MappingBundle.
+
+    A line-oriented reader for the layout :func:`mapping_to_turtle` and
+    arangodb-schema-analyzer write (no rdflib needed; see
+    :mod:`.owl_rdflib` for arbitrary Turtle). A datatype property keeps its
+    full local name (``:file_name`` is ``file_name``); only a relationship
+    property written ``:<REL>_<prop>`` with ``rdfs:domain :<REL>`` loses the
+    ``<REL>_`` prefix. Its domain may be one class, several ``rdfs:domain``
+    lines, or an ``owl:unionOf`` list (the analyzer's form for a field
+    several classes share), and ``phys:attributeName`` names the stored
+    field when it differs from the property name.
+    """
     classes: dict[str, dict[str, str]] = {}
     obj_props: dict[str, dict[str, str]] = {}
-    data_props: list[dict[str, str]] = []
+    data_props: list[dict[str, Any]] = []
     annotations: dict[str, dict[str, str]] = {}
 
     current_subject: str | None = None
@@ -143,14 +154,20 @@ def turtle_to_mapping(turtle: str) -> MappingBundle:
         if m_dataprop:
             current_subject = m_dataprop.group(1)
             current_kind = "dataprop"
-            data_props.append({"name": current_subject})
+            data_props.append({"name": current_subject, "domains": []})
+            continue
+
+        m_union = re.match(r"rdfs:domain\s+\[.*owl:unionOf\s*\(([^)]*)\)", stripped)
+        if m_union:
+            if current_kind == "dataprop" and data_props:
+                data_props[-1]["domains"].extend(re.findall(r":(\w+)", m_union.group(1)))
             continue
 
         m_domain = re.match(r"rdfs:domain\s+:(\w+)", stripped)
         if m_domain:
             domain = m_domain.group(1)
             if current_kind == "dataprop" and data_props:
-                data_props[-1]["domain"] = domain
+                data_props[-1]["domains"].append(domain)
             elif current_kind == "objprop" and current_subject:
                 obj_props[current_subject]["domain"] = domain
             continue
@@ -164,7 +181,14 @@ def turtle_to_mapping(turtle: str) -> MappingBundle:
                 obj_props[current_subject]["range"] = rng.lstrip(":")
             continue
 
-        for annot in ("mappingStyle", "collectionName", "typeField", "typeValue", "edgeCollectionName"):
+        for annot in (
+            "mappingStyle",
+            "collectionName",
+            "typeField",
+            "typeValue",
+            "edgeCollectionName",
+            "attributeName",
+        ):
             m_a = re.match(rf':(\w+)\s+phys:{annot}\s+"([^"]+)"', stripped)
             if m_a:
                 subject = m_a.group(1)
@@ -174,14 +198,8 @@ def turtle_to_mapping(turtle: str) -> MappingBundle:
     entities_cs: list[dict[str, Any]] = []
     entities_pm: dict[str, dict[str, Any]] = {}
     for name in classes:
-        props = [
-            {
-                "name": dp["name"].split("_")[-1] if "_" in dp["name"] else dp["name"],
-                "type": _from_xsd_type(dp.get("range", "xsd:string")),
-            }
-            for dp in data_props
-            if dp.get("domain") == name
-        ]
+        own = [dp for dp in data_props if name in dp["domains"]]
+        props = [{"name": dp["name"], "type": _from_xsd_type(dp.get("range", "xsd:string"))} for dp in own]
         entities_cs.append({"name": name, "labels": [name], "properties": props})
         ann = annotations.get(name, {})
         pm_entry: dict[str, Any] = {
@@ -191,6 +209,13 @@ def turtle_to_mapping(turtle: str) -> MappingBundle:
         if pm_entry["style"] == "LABEL":
             pm_entry["typeField"] = ann.get("typeField", "type")
             pm_entry["typeValue"] = ann.get("typeValue", name)
+        fields = {
+            dp["name"]: {"field": annotations[dp["name"]]["attributeName"]}
+            for dp in own
+            if annotations.get(dp["name"], {}).get("attributeName")
+        }
+        if fields:
+            pm_entry["properties"] = fields
         entities_pm[name] = pm_entry
 
     rels_cs: list[dict[str, Any]] = []
@@ -201,11 +226,12 @@ def turtle_to_mapping(turtle: str) -> MappingBundle:
         to_e = op.get("range", "Any")
         props = [
             {
-                "name": dp["name"].replace(f"{rtype}_", ""),
+                # Exactly the `<REL>_` prefix mapping_to_turtle adds, not every occurrence.
+                "name": dp["name"].removeprefix(f"{rtype}_"),
                 "type": _from_xsd_type(dp.get("range", "xsd:string")),
             }
             for dp in data_props
-            if dp.get("domain") == rtype
+            if rtype in dp["domains"]
         ]
         rels_cs.append({"type": rtype, "fromEntity": from_e, "toEntity": to_e, "properties": props})
         ann = annotations.get(rtype, {})
