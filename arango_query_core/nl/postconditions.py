@@ -23,8 +23,11 @@ Semantics (mirrors ``nl2cypher``'s original, language-agnostic here):
 
 * Postconditions run **after** the adapter's ``validate`` succeeds — a retry is
   only ever spent on an already-valid query.
-* The **first** violation wins; checks are not accumulated. One clear, specific
-  correction beats a pile of them.
+* The **first hard** violation wins; checks are not accumulated. One clear,
+  specific correction beats a pile of them. A *soft* violation does not stop
+  the run: the remaining checks still see the query, and any hard violation
+  among them takes precedence. Only a query no check objects to as hard can
+  become a soft fallback, whatever order the checks are listed in.
 * A check that **raises** is treated as a violation, not an error — a broken
   postcondition must not turn a safety mechanism into an outage. Fail closed.
 * :meth:`Postcondition.prompt_section` renders **once**; it must not vary
@@ -120,15 +123,22 @@ def run_postconditions(
     postconditions: Sequence[Postcondition] | None,
     context: PostconditionContext,
 ) -> PostconditionViolation | None:
-    """Run *postconditions* in order, returning the first violation.
+    """Run *postconditions* in order, returning the first hard violation, or
+    else the first soft one.
 
-    A check that raises is treated as a violation rather than being allowed to
-    abort the translation: a broken check must not be able to turn a safety
-    mechanism into an outage, and failing closed is the conservative reading.
+    A soft violation does not stop the run, so a hard check listed after it
+    still sees the query; otherwise a query breaking a hard rule could be
+    returned as a soft fallback.
+
+    A check that raises is treated as a (hard) violation rather than being
+    allowed to abort the translation: a broken check must not be able to turn a
+    safety mechanism into an outage, and failing closed is the conservative
+    reading.
     """
     if not postconditions:
         return None
 
+    first_soft: PostconditionViolation | None = None
     for pc in postconditions:
         code = getattr(pc, "code", pc.__class__.__name__)
         try:
@@ -139,9 +149,13 @@ def run_postconditions(
                 reason=f"Postcondition {code!r} raised {type(exc).__name__}: {exc}",
                 suggested_hint="Simplify the query; the check could not evaluate it.",
             )
-        if violation is not None:
+        if violation is None:
+            continue
+        if not violation.soft:
             return violation
-    return None
+        if first_soft is None:
+            first_soft = violation
+    return first_soft
 
 
 def postcondition_prompt_sections(

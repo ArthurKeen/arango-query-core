@@ -31,6 +31,16 @@ and this file must say so explicitly.
 
 - `IndexInfo.traversal_safe` (default `True`): False when a traversal must not
   use the index. Additive; existing callers are unaffected.
+- `PostconditionViolation.soft` (default `False`): a soft violation is
+  retried like any other, but when the retry budget is spent
+  `NLQueryEngine.generate` returns the first valid candidate whose only
+  objection was soft, instead of failing closed. The candidate still passes
+  guardrails, and the violation stays on `NLResult.postcondition` (`ok` True
+  with a non-None `postcondition` marks a soft fallback). For checks such as
+  "the query returned no rows", where empty is sometimes the right answer.
+  `run_postconditions` now returns the first *hard* violation ahead of any
+  soft one, so a hard check listed after a soft one still applies. Additive;
+  existing checks are unaffected. Part of #4.
 
 ## [0.2.1] - 2026-10-16
 
@@ -52,18 +62,6 @@ and this file must say so explicitly.
   property to its stored field in the physical mapping
   (`properties.<name>.field`), so a sanitized or renamed field (`file-name`,
   `page_count`) resolves to the attribute that holds it.
-
-## [Unreleased]
-
-### Added
-
-- `PostconditionViolation.soft` (default `False`, so existing checks are
-  unchanged). A soft violation is retried like any other. When the retry
-  budget is spent, `NLQueryEngine.generate` returns the first valid
-  candidate whose only objection was soft — still subject to guardrails,
-  with the violation on `NLResult.postcondition` — instead of failing
-  closed. For checks such as "the query returned no rows", where empty is
-  sometimes the right answer (#4).
 
 ## [0.2.0] - 2026-08-23
 
