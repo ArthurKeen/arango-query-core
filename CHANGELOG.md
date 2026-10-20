@@ -53,6 +53,18 @@ and this file must say so explicitly.
   (`properties.<name>.field`), so a sanitized or renamed field (`file-name`,
   `page_count`) resolves to the attribute that holds it.
 
+## [Unreleased]
+
+### Added
+
+- `PostconditionViolation.soft` (default `False`, so existing checks are
+  unchanged). A soft violation is retried like any other. When the retry
+  budget is spent, `NLQueryEngine.generate` returns the first valid
+  candidate whose only objection was soft — still subject to guardrails,
+  with the violation on `NLResult.postcondition` — instead of failing
+  closed. For checks such as "the query returned no rows", where empty is
+  sometimes the right answer (#4).
+
 ## [0.2.0] - 2026-08-23
 
 ### BREAKING

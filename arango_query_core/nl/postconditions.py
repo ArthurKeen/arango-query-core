@@ -15,7 +15,9 @@ budget as parse and translate: the model is told the rule up front (via
 :meth:`Postcondition.prompt_section`, rendered once into the cacheable system
 prefix), and a violation is fed back into the next prompt exactly like a
 validation failure — so the loop gets a chance to *correct* the query rather
-than just reject it, and fails closed when the budget is spent.
+than just reject it, and fails closed when the budget is spent — unless a
+candidate drew only a *soft* violation (``PostconditionViolation.soft``), in
+which case the first such candidate is returned instead.
 
 Semantics (mirrors ``nl2cypher``'s original, language-agnostic here):
 
@@ -60,6 +62,15 @@ class PostconditionViolation:
     """How to fix it. Also fed into the retry prompt, after ``reason``."""
     code: str = "postcondition_violation"
     """Stable identifier for telemetry / assertions, e.g. ``"time_windowed"``."""
+    soft: bool = False
+    """A soft violation asks for a retry but does not make the query unusable.
+
+    Use it for an objection that is sometimes the right answer — e.g. "the query
+    returned no rows" when the honest answer may be "none". When the retry
+    budget is spent, the engine returns the first valid candidate whose only
+    objection was soft (with this violation on ``NLResult.postcondition``)
+    instead of failing closed. Hard violations (the default) still fail closed.
+    """
 
 
 @dataclass(frozen=True)

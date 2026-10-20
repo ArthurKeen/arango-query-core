@@ -96,6 +96,9 @@ class NLQueryEngine:
         failure: ValidationResult | None = None
         violation: PostconditionViolation | None = None
         candidate = ""
+        # First valid candidate whose only objection was soft: what the call
+        # returns if the budget runs out without a clean candidate.
+        fallback: tuple[str, ValidationResult, PostconditionViolation] | None = None
 
         for attempt in range(self.max_retries + 1):
             if attempt > 0:
@@ -138,6 +141,15 @@ class NLQueryEngine:
             result.postcondition = violation
             if violation is None:
                 break
+            if violation.soft and fallback is None:
+                fallback = (candidate, failure, violation)
+
+        if fallback is not None and (failure is None or not failure.ok or violation is not None):
+            # Budget spent without a clean candidate, but one drew only a soft
+            # objection — return it, with the objection on the result, rather
+            # than refuse a query that may well be right.
+            candidate, result.validation, result.postcondition = fallback
+            failure, violation = result.validation, None
 
         if failure is None or not failure.ok:
             result.error = failure.error if failure else "provider returned nothing"
