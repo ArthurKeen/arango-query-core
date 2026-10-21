@@ -73,6 +73,10 @@ class PostconditionViolation:
     budget is spent, the engine returns the first valid candidate whose only
     objection was soft (with this violation on ``NLResult.postcondition``)
     instead of failing closed. Hard violations (the default) still fail closed.
+
+    Only that first soft candidate is offered to the guardrails: if they refuse
+    it, the call fails closed with the guardrail's reason, even when a later
+    soft candidate would have passed — the conservative reading.
     """
 
 
