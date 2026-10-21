@@ -17,6 +17,8 @@ signature breaks.
 
 from __future__ import annotations
 
+import logging
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +34,8 @@ from .providers import LLMProvider
 from .seams import GuardrailVerdict, QueryLanguageAdapter, ValidationResult
 
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -58,6 +62,8 @@ class NLResult:
     guardrail: GuardrailVerdict | None = None
     validation: ValidationResult | None = None
     postcondition: PostconditionViolation | None = None
+    provider_errors: int = 0
+    """Provider calls that raised and were retried (``retry_provider_errors``)."""
 
 
 @dataclass
@@ -91,11 +97,26 @@ class NLQueryEngine:
     guardrail_context: dict[str, Any] = field(default_factory=dict)
     postconditions: Sequence[Postcondition] = ()
     postcondition_mapping: Any = None
+    retry_provider_errors: bool = False
+    """When True, a provider call that raises (a timeout, a 5xx) uses one
+    attempt of the ``max_retries`` budget and the loop goes on; the count is
+    on :attr:`NLResult.provider_errors`. If no attempt ever returned a
+    response, the last exception is re-raised. False (the default) lets the
+    first exception propagate, as before."""
 
-    def generate(self, question: str, *, schema_context: str = "") -> NLResult:
+    def generate(self, question: str, *, schema_context: str = "", user_hint: str = "") -> NLResult:
+        """Generate a query for *question*.
+
+        *user_hint* is appended to the **first** attempt's user message only —
+        e.g. "your previous query failed with ..." when a caller re-asks after a
+        failure. It leaves the system prompt (the cacheable prefix), few-shot
+        retrieval and postcondition context untouched; retries carry their own
+        "previous query was rejected" text.
+        """
         result = NLResult()
         system = self._system_prompt(question, schema_context)
-        user = question
+        user = f"{question}\n\n{user_hint}" if user_hint else question
+        last_provider_error: Exception | None = None
         failure: ValidationResult | None = None
         violation: PostconditionViolation | None = None
         candidate = ""
@@ -104,7 +125,7 @@ class NLQueryEngine:
         fallback: tuple[str, ValidationResult, PostconditionViolation] | None = None
 
         for attempt in range(self.max_retries + 1):
-            if attempt > 0:
+            if attempt > 0 and failure is not None:
                 # A postcondition rejection carries its own correction text;
                 # otherwise fall back to the adapter's syntactic repair hint.
                 if violation is not None:
@@ -119,11 +140,26 @@ class NLQueryEngine:
                     f"Problem: {hint}\n"
                     f"Return a corrected query only."
                 )
+            if attempt > 0:
                 result.retries = attempt
-            content, usage = self.provider.generate(system, user)
+            try:
+                content, usage = self.provider.generate(system, user)
+            except Exception as exc:
+                if not self.retry_provider_errors:
+                    raise
+                result.provider_errors += 1
+                last_provider_error = exc
+                logger.warning(
+                    "NL provider call failed (attempt %d/%d): %s: %s",
+                    attempt + 1,
+                    self.max_retries + 1,
+                    type(exc).__name__,
+                    exc,
+                )
+                continue
             for key in _USAGE_KEYS:
                 setattr(result, key, getattr(result, key) + int(usage.get(key, 0) or 0))
-            candidate = _strip_code_fence(content, self.adapter.language)
+            candidate = self._normalize(_strip_code_fence(content, self.adapter.language))
             failure = self.adapter.validate(candidate)
             result.validation = failure
             if not failure.ok:
@@ -156,6 +192,9 @@ class NLQueryEngine:
                 candidate, result.validation, result.postcondition = fallback
                 failure, violation = result.validation, None
 
+        if failure is None and last_provider_error is not None:
+            # Every attempt raised: nothing to report but the failure itself.
+            raise last_provider_error
         if failure is None or not failure.ok:
             result.error = failure.error if failure else "provider returned nothing"
             return result
@@ -175,6 +214,21 @@ class NLQueryEngine:
         result.query = candidate
         result.ok = True
         return result
+
+    def _normalize(self, candidate: str) -> str:
+        """The adapter's optional deterministic repair (``normalize`` seam),
+        applied before validation; the result is what is validated, quoted in
+        retries and returned. A ``normalize`` that raises is logged and the
+        candidate is kept — a broken repair must not abort generation."""
+        normalize = getattr(self.adapter, "normalize", None)
+        if not callable(normalize):
+            return candidate
+        try:
+            normalized = normalize(candidate)
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            logger.warning("adapter.normalize raised %s: %s; keeping the candidate", type(exc).__name__, exc)
+            return candidate
+        return normalized if isinstance(normalized, str) else candidate
 
     def _system_prompt(self, question: str, schema_context: str) -> str:
         sections = [self.adapter.grammar_prompt_section(schema_context)]
@@ -208,14 +262,22 @@ class NLQueryEngine:
         return "\n\n".join(s for s in sections if s)
 
 
+_FENCED_BLOCK = re.compile(r"```[^\n`]*\n(.*?)```", re.DOTALL)
+
+
 def _strip_code_fence(content: str, language: str) -> str:
     """Extract the query from a fenced code block, tolerating bare text.
 
     LLMs frequently wrap the answer in ```<lang> fences despite the
-    output-format contract; accept fenced, language-tagged-fenced, and
-    bare responses uniformly so the validator sees only query text.
+    output-format contract, and often lead with prose ("Here is the
+    query:") or follow with an explanation. The first fenced block wherever
+    it appears is the query; a response that only opens a fence yields what
+    follows it; a response without a fence is returned as is.
     """
     text = content.strip()
+    block = _FENCED_BLOCK.search(text)
+    if block is not None:
+        return block.group(1).strip()
     if not text.startswith("```"):
         return text
     first_newline = text.find("\n")
