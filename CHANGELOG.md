@@ -6,6 +6,37 @@ exact versions (contextual-data-fabric CC-9) and re-run their golden /
 eval suites on every bump — pre-1.0, **minor** bumps may break the API
 and this file must say so explicitly.
 
+## [Unreleased]
+
+### Added
+
+- `QueryLanguageAdapter` may define `normalize(query) -> str`, an optional seam
+  `NLQueryEngine` calls on every candidate after the fence is stripped and
+  before `validate`. Use it for a deterministic repair that would otherwise
+  cost an LLM retry; nl2cypher uses it to rewrite labels the schema does not
+  have. What it returns is validated, quoted in retries and returned. A
+  `normalize` that raises is logged and the candidate kept. It is not a
+  protocol member, so existing adapters are unaffected. #8
+- `NLQueryEngine.generate(..., user_hint="")` appends a caller hint to the
+  first attempt's user message only, for example "your previous query
+  failed with …" when re-asking. It leaves the system prompt (the cacheable
+  prefix), few-shot retrieval and postcondition context untouched. #10
+- `NLQueryEngine(retry_provider_errors=True)`: a provider call that raises (a
+  timeout, a 5xx) uses one attempt of `max_retries`, and the loop goes on.
+  `NLResult.provider_errors` counts them. If no attempt returned a response,
+  the last exception is re-raised. The default (`False`) keeps today's
+  behaviour: the first exception propagates. #9
+
+### Fixed
+
+- The engine finds the query in the first fenced block anywhere in the
+  response. It used to strip a fence only when the response started with
+  one, so "Here is the query: ```…```" failed validation and spent a retry.
+  A response that opens a fence without closing it yields what follows the
+  fence, and a response with no fence is returned as is, as before. When a
+  response has two fenced blocks, the first is taken; it used to be
+  everything from the first opening fence to the last closing one. #7
+
 ## [0.2.3] - 2026-10-21
 
 ### Added

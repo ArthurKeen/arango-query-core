@@ -74,6 +74,15 @@ class QueryLanguageAdapter(Protocol):
     ``language`` is the lowercase tag used for fenced code blocks and
     telemetry (``"cypher"``, ``"sparql"``). All other members map
     one-to-one onto the numbered seams in the module docstring.
+
+    **Optional:** ``normalize(query: str) -> str``. When an adapter defines
+    it, :class:`~arango_query_core.nl.NLQueryEngine` calls it on every
+    candidate, after the code fence is stripped and before :meth:`validate`,
+    for a deterministic repair that would otherwise cost an LLM retry (e.g.
+    rewriting a label the schema does not have to the one it does). What it
+    returns is what is validated, quoted in a retry and returned. It is not a
+    protocol member, so existing adapters conform unchanged; a ``normalize``
+    that raises is logged and the candidate kept.
     """
 
     language: str

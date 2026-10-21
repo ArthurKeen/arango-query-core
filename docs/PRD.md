@@ -122,14 +122,14 @@ to prevent a three-way fork.
 | `exec` | `AqlExecutor` protocol, `safe_execute` (bind-var reference checking), `explain_aql` |
 | `extensions` | `ExtensionRegistry` / `ExtensionPolicy` for `arango.*` extension functions |
 | `errors` | `CoreError` shared base |
-| `nl.engine` | `NLQueryEngine` — prompt assembly, few-shot retrieval, provider call, generate→validate→repair loop; `NLResult` |
+| `nl.engine` | `NLQueryEngine` — prompt assembly, few-shot retrieval, provider call, generate→validate→repair loop; `NLResult`. The query is the first fenced block anywhere in a response (prose around it is ignored), else the bare response. An adapter's optional `normalize` seam repairs each candidate before validation. `generate(user_hint=...)` appends a caller hint to the first user message only, leaving the cacheable system prefix alone. With `retry_provider_errors=True`, a provider call that raises uses one attempt of the budget (`NLResult.provider_errors`), and the last error is re-raised only if no attempt returned a response; the default propagates the first error. |
 | `nl.providers` | `LLMProvider` protocol; OpenAI / OpenRouter / Anthropic implementations (Anthropic with prompt-cache system-block splitting); env-driven `get_llm_provider` |
 | `nl.fewshot` | `FewShotIndex` over `(question, query)` pairs (legacy corpus keys accepted); `BM25Retriever` (rank_bm25, `nl` extra) and `DenseRetriever` (sentence-transformers, `dense` extra), selected via `mode="bm25"\|"dense"\|"auto"`; `cached_few_shot_index` memoizes the expensive dense build |
 | `nl.grounding` | Seam 6/7 retrieval: `LabelIndex`/`GroundedEntity` (entity grounding) and `PredicateIndex`/`GroundedPredicate` (predicate/schema-convention grounding, renders IRI local names not labels), sharing one token-substring scorer |
 | `nl.pathindex` | Seam 8: `ClassPathIndex`/`ClassPath` — bounded shortest predicate paths between two seam-6/7-anchored classes over the TBox's class-connectivity graph |
 | `nl.postconditions` | Caller-supplied semantic invariants (`Postcondition`, `PostconditionContext`, `PostconditionViolation`, `run_postconditions`) enforced through the engine's own retry budget; fails closed on exhaustion, unless a valid candidate drew only a soft violation (`PostconditionViolation.soft`); the first such candidate is returned, with the violation on `NLResult.postcondition` |
 | `nl.synthbank` | `SHAPE_CATALOG`/`ShapeTemplate` — 9 ontology-agnostic compositional query-shape templates for synthetic few-shot bank generation |
-| `nl.seams` | `QueryLanguageAdapter` — the eight language-specific seams: (1) grammar prompt section, (2) few-shot corpus, (3) syntax validator, (4) repair rules keyed on validator errors, (5) guardrail checks, (6) entity grounding index, (7) predicate grounding index, (8) relationship-path grounding index. Plus `ValidationResult`, `GuardrailVerdict` |
+| `nl.seams` | `QueryLanguageAdapter` — the eight language-specific seams: (1) grammar prompt section, (2) few-shot corpus, (3) syntax validator, (4) repair rules keyed on validator errors, (5) guardrail checks, (6) entity grounding index, (7) predicate grounding index, (8) relationship-path grounding index. Optional, outside the protocol: `normalize(query) -> str`, a deterministic repair applied before validation. Plus `ValidationResult`, `GuardrailVerdict` |
 
 ## 5. Requirements
 
