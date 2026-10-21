@@ -39,7 +39,10 @@ class NLResult:
     """Outcome of one NL→query generation.
 
     ``query`` is empty when generation failed (``ok`` False); ``error``
-    then carries the last validation failure or guardrail refusal.
+    then carries the last validation failure, postcondition violation or
+    guardrail refusal. ``ok`` True with a non-None ``postcondition`` means a
+    soft fallback: the retry budget ran out and ``query`` is the first valid
+    candidate whose only objection was soft (``PostconditionViolation.soft``).
     Token fields accumulate across retries so cost accounting sees the
     whole conversation, not the last attempt.
     """
@@ -96,6 +99,9 @@ class NLQueryEngine:
         failure: ValidationResult | None = None
         violation: PostconditionViolation | None = None
         candidate = ""
+        # First valid candidate whose only objection was soft: what the call
+        # returns if the budget runs out without a clean candidate.
+        fallback: tuple[str, ValidationResult, PostconditionViolation] | None = None
 
         for attempt in range(self.max_retries + 1):
             if attempt > 0:
@@ -138,13 +144,25 @@ class NLQueryEngine:
             result.postcondition = violation
             if violation is None:
                 break
+            # Soft only if no check objected as hard (run_postconditions
+            # returns a hard violation ahead of any soft one).
+            if violation.soft and fallback is None:
+                fallback = (candidate, failure, violation)
+        else:
+            # Budget spent without a clean candidate. If one drew only a soft
+            # objection, return it — with the objection on the result — rather
+            # than refuse a query that may well be right.
+            if fallback is not None:
+                candidate, result.validation, result.postcondition = fallback
+                failure, violation = result.validation, None
 
         if failure is None or not failure.ok:
             result.error = failure.error if failure else "provider returned nothing"
             return result
         if violation is not None:
-            # Budget spent on a valid-but-semantically-rejected query — fail
-            # closed rather than return a plausible wrong answer.
+            # Budget spent on a valid-but-semantically-rejected query with no
+            # soft-only candidate to fall back on — fail closed rather than
+            # return a plausible wrong answer.
             result.error = f"{violation.reason} ({violation.code})"
             return result
 

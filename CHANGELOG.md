@@ -31,6 +31,16 @@ and this file must say so explicitly.
 
 - `IndexInfo.traversal_safe` (default `True`): False when a traversal must not
   use the index. Additive; existing callers are unaffected.
+- `PostconditionViolation.soft` (default `False`): a soft violation is
+  retried like any other, but when the retry budget is spent
+  `NLQueryEngine.generate` returns the first valid candidate whose only
+  objection was soft, instead of failing closed. The candidate still passes
+  guardrails, and the violation stays on `NLResult.postcondition` (`ok` True
+  with a non-None `postcondition` marks a soft fallback). For checks such as
+  "the query returned no rows", where empty is sometimes the right answer.
+  `run_postconditions` now returns the first *hard* violation ahead of any
+  soft one, so a hard check listed after a soft one still applies. Additive;
+  existing checks are unaffected. Part of #4.
 
 ## [0.2.1] - 2026-10-16
 
