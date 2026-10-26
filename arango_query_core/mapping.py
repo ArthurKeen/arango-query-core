@@ -10,6 +10,28 @@ from .errors import CoreError
 
 JsonObj = dict[str, Any]
 
+#: Entity mapping styles for a *supertype*: a label whose instances are the
+#: instances of other labels (LDBC's ``Message`` is every ``Post`` and every
+#: ``Comment``).
+#:
+#: * ``MULTI_LABEL`` — the members share one collection and every document
+#:   lists all its labels in an array field::
+#:
+#:       {"style": "MULTI_LABEL", "collectionName": "nodes",
+#:        "labelsField": "labels", "labelValue": "Message"}
+#:
+#:   matches documents of ``nodes`` whose ``labels`` contain ``"Message"``.
+#: * ``UNION`` — the members live in their own collections::
+#:
+#:       {"style": "UNION", "members": ["Post", "Comment"]}
+#:
+#: Members come from the physical ``members`` list or, failing that, the
+#: conceptual entity's ``subtypes``. They must be mapped labels; a member may
+#: itself be a supertype (members are flattened). Consumers that switch on
+#: ``style`` and do not know these values fail closed, which is why supertypes
+#: get styles of their own rather than extra fields on ``LABEL``/``COLLECTION``.
+SUPERTYPE_STYLES = frozenset({"MULTI_LABEL", "UNION"})
+
 
 # ArangoDB collection-name grammar (per the official docs):
 #   * starts with a letter or underscore
@@ -391,6 +413,13 @@ class MappingResolver:
             return {}
 
         props_raw = mapping.get("properties", {})
+        if not props_raw and mapping.get("style") in SUPERTYPE_STYLES:
+            # A supertype without its own property list has its members' properties.
+            merged: dict[str, PropertyInfo] = {}
+            for member in self.supertype_members(label_or_type):
+                for name, info in self.resolve_properties(member).items():
+                    merged.setdefault(name, info)
+            return merged
         if not isinstance(props_raw, dict):
             return {}
 
@@ -518,7 +547,16 @@ class MappingResolver:
         be in the set **and** every class in the union must map to the same
         physical collection (otherwise multiple collections are reachable and
         IS_SAME_COLLECTION is still needed).
+
+        A supertype target is guaranteed when every class the endpoint can be
+        is one of its members: ``HAS_CREATOR``'s domain ``[Post, Comment]``
+        guarantees ``Message``.
         """
+        if self.is_supertype(target_label):
+            classes = [endpoint] if isinstance(endpoint, str) else list(endpoint or [])
+            members = set(self.supertype_members(target_label))
+            return bool(classes) and all(c in members for c in classes)
+
         if isinstance(endpoint, str):
             return endpoint == target_label
 
@@ -644,6 +682,68 @@ class MappingResolver:
     def has_vci(self, rel_type: str) -> bool:
         """Check if any index on the relationship's edge collection has VCI enabled."""
         return any(idx.vci for idx in self.resolve_indexes(rel_type))
+
+    # ------------------------------------------------------------------
+    # Supertypes (label hierarchies)
+    # ------------------------------------------------------------------
+
+    def is_supertype(self, label: str) -> bool:
+        """True when *label* is mapped with a supertype style (see :data:`SUPERTYPE_STYLES`)."""
+        try:
+            return self.resolve_entity(label).get("style") in SUPERTYPE_STYLES
+        except CoreError:
+            return False
+
+    def _declared_members(self, label: str, emap: JsonObj) -> list[str]:
+        members = emap.get("members")
+        if members is None:
+            for ent in self.bundle.conceptual_schema.get("entities", []) or []:
+                if isinstance(ent, dict) and ent.get("name") == label:
+                    members = ent.get("subtypes")
+                    break
+        if not isinstance(members, list) or not members or not all(isinstance(m, str) and m for m in members):
+            raise CoreError(
+                f"Supertype {label!r} declares no members: give the physical mapping a 'members' list "
+                f"or the conceptual entity a 'subtypes' list",
+                code="INVALID_MAPPING",
+            )
+        return members
+
+    def supertype_members(self, label: str) -> list[str]:
+        """The concrete (non-supertype) labels a supertype stands for, in declaration order.
+
+        Nested supertypes are flattened. Raises ``INVALID_MAPPING`` for a
+        member that is not mapped or a cycle; raises ``MAPPING_NOT_FOUND`` if
+        *label* is not mapped, and ``INVALID_MAPPING`` if it is not a supertype.
+        """
+        out: list[str] = []
+
+        def visit(name: str, path: tuple[str, ...]) -> None:
+            if name in path:
+                raise CoreError(
+                    f"Supertype cycle: {' -> '.join((*path, name))}",
+                    code="INVALID_MAPPING",
+                )
+            try:
+                emap = self.resolve_entity(name)
+            except CoreError as e:
+                if path:
+                    raise CoreError(
+                        f"Supertype {path[-1]!r} lists member {name!r}, which is not mapped",
+                        code="INVALID_MAPPING",
+                    ) from e
+                raise
+            if emap.get("style") not in SUPERTYPE_STYLES:
+                if not path:
+                    raise CoreError(f"{name!r} is not a supertype", code="INVALID_MAPPING")
+                if name not in out:
+                    out.append(name)
+                return
+            for member in self._declared_members(name, emap):
+                visit(member, (*path, name))
+
+        visit(label, ())
+        return out
 
     def all_entity_labels(self) -> list[str]:
         """Return all entity type labels defined in the mapping."""

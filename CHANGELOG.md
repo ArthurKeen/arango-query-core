@@ -6,6 +6,32 @@ exact versions (contextual-data-fabric CC-9) and re-run their golden /
 eval suites on every bump — pre-1.0, **minor** bumps may break the API
 and this file must say so explicitly.
 
+## [Unreleased]
+
+### Added
+
+- **Supertypes (label hierarchies).** A supertype is a label that stands for
+  other labels, such as LDBC's `Message`, which is every `Post` and every
+  `Comment`. It is mapped with one of two new entity styles,
+  `SUPERTYPE_STYLES`:
+  - `MULTI_LABEL`: the members share a collection and list their labels in
+    an array field (`labelsField`, `labelValue`);
+  - `UNION`: the members have their own collections (`members`).
+- **New resolver methods.** `MappingResolver.is_supertype()` and
+  `supertype_members()`. The latter flattens nested supertypes and refuses
+  unknown members and cycles with `INVALID_MAPPING`. A supertype without
+  properties of its own has its members' properties.
+- **`edge_constrains_target`** treats a supertype target as guaranteed when
+  every class an edge endpoint can be is a member: `HAS_CREATOR`'s domain
+  `[Post, Comment]` guarantees `Message`.
+- **OWL/Turtle** writes and reads the hierarchy as `rdfs:subClassOf`.
+  `turtle_to_mapping` no longer invents a `collectionName` for a `UNION`
+  supertype. The rdflib parser does not read `rdfs:subClassOf` yet.
+
+The change is additive: mappings without the new styles resolve exactly as
+before. A consumer that switches on `style` and does not handle the new
+values rejects them rather than misreading them.
+
 ## [0.2.4] - 2026-10-21
 
 ### Added
