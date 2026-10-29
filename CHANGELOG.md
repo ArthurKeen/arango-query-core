@@ -6,6 +6,19 @@ exact versions (contextual-data-fabric CC-9) and re-run their golden /
 eval suites on every bump — pre-1.0, **minor** bumps may break the API
 and this file must say so explicitly.
 
+## [Unreleased]
+
+### Added
+
+- **Temporal property encodings.** A property may declare how its temporal
+  values are stored, `"encoding": "epoch_ms"` (integer milliseconds since the
+  epoch) or `"iso8601"` (an ISO-8601 string), read into
+  `PropertyInfo.encoding` (empty when not declared) and carried by
+  `schema_summary()`. Any other value is refused with `INVALID_MAPPING`.
+  The vocabulary is `TEMPORAL_ENCODINGS`. It is a physical detail, like
+  `field`, so OWL/Turtle does not carry it. arango-cypher-py lowers temporal
+  accessors, functions and arithmetic from it (LDBC WP-41).
+
 ## [0.2.5] - 2026-10-26
 
 ### Added
