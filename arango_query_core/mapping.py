@@ -163,6 +163,14 @@ class IndexInfo:
     traversal_safe: bool = True
 
 
+#: Storage encodings of temporal property values.
+#:
+#: * ``epoch_ms`` — an integer, milliseconds since 1970-01-01T00:00:00Z.
+#: * ``iso8601`` — an ISO-8601 string (``2010-01-03T15:10:31.499+00:00``,
+#:   or ``2010-01-03`` for a date).
+TEMPORAL_ENCODINGS = frozenset({"epoch_ms", "iso8601"})
+
+
 @dataclass(frozen=True)
 class PropertyInfo:
     """Metadata for a single property/attribute on an entity or relationship.
@@ -187,6 +195,25 @@ class PropertyInfo:
     # / numeric / free_text / boolean / other), inferred by the schema analyzer.
     # Consumers choose a matching strategy from this rather than field names.
     role: str = ""
+    # How a temporal value (``type`` date / datetime / …) is stored: one of
+    # ``TEMPORAL_ENCODINGS``, or empty when the mapping does not say.
+    # Consumers must not guess an encoding: comparisons, components
+    # (``.year``) and arithmetic differ between the two.
+    encoding: str = ""
+
+
+def _property_encoding(owner: str, name: str, raw: Any) -> str:
+    """A property's declared ``encoding``, checked against ``TEMPORAL_ENCODINGS``."""
+    if raw in (None, ""):
+        return ""
+    encoding = str(raw)
+    if encoding not in TEMPORAL_ENCODINGS:
+        raise CoreError(
+            f"Property {owner}.{name} declares encoding {encoding!r}; expected one of "
+            f"{', '.join(sorted(TEMPORAL_ENCODINGS))}",
+            code="INVALID_MAPPING",
+        )
+    return encoding
 
 
 @dataclass(frozen=True)
@@ -438,6 +465,7 @@ class MappingResolver:
                     numeric_like=bool(meta.get("numericLike") or meta.get("numeric_like")),
                     sample_values=tuple(str(s) for s in samples) if samples else (),
                     role=str(meta.get("role") or ""),
+                    encoding=_property_encoding(label_or_type, name, meta.get("encoding")),
                 )
             elif isinstance(meta, str):
                 result[name] = PropertyInfo(field=name, type=meta)
@@ -797,6 +825,7 @@ class MappingResolver:
                         **({"numericLike": True} if p.numeric_like else {}),
                         **({"sampleValues": list(p.sample_values)} if p.sample_values else {}),
                         **({"role": p.role} if p.role else {}),
+                        **({"encoding": p.encoding} if p.encoding else {}),
                     }
                     for name, p in props.items()
                 },
@@ -831,6 +860,7 @@ class MappingResolver:
                         **({"numericLike": True} if p.numeric_like else {}),
                         **({"sampleValues": list(p.sample_values)} if p.sample_values else {}),
                         **({"role": p.role} if p.role else {}),
+                        **({"encoding": p.encoding} if p.encoding else {}),
                     }
                     for name, p in props.items()
                 },
